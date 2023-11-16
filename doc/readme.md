@@ -10,9 +10,10 @@ https://github.com/Vc-great/openapi-to
 
 
 
-
-
 ## swagger
-
 https://github.com/OAI/OpenAPI-Specification/blob/main/versions/2.0.md
 https://swagger.io/docs/
+
+
+## openAPi
+https://www.npmjs.com/package/openapi-types

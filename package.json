@@ -22,6 +22,7 @@
   "homepage": "https://github.com/xiangwenhu/swagger-to-petal-service#readme",
   "dependencies": {
     "json-schema-to-typescript": "^13.1.1",
-    "lodash": "^4.17.21"
+    "lodash": "^4.17.21",
+    "openapi-types": "^12.1.3"
   }
 }

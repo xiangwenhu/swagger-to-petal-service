@@ -1,10 +1,11 @@
 import _ from "lodash";
+import { OpenAPIV2, OpenAPIV3, OpenAPIV3_1 } from "openapi-types"
 
 const TS_W_KEYS = ['items', 'properties']
 
 export default class SchemaSpoiler {
-    private docs: any;
-    constructor(docs: any) {
+    private docs: OpenAPIV2.Document | OpenAPIV3.Document | OpenAPIV3_1.Document;
+    constructor(docs: OpenAPIV2.Document | OpenAPIV3.Document | OpenAPIV3_1.Document;) {
         this.docs = docs;
     }
 
@@ -28,7 +29,6 @@ export default class SchemaSpoiler {
                 delete cSchema.$ref;
             } else if (key === "type") {
                 if (value == "object" && _.isObject(cSchema.properties)) {
-                    // cSchema.properties =  this.extractSchema__(cSchema.properties)
                     Object.entries(cSchema.properties).forEach(([pk, pv]) => {
                         // @ts-ignore
                         cSchema.properties[pk] = this.extractSchema(pv);
