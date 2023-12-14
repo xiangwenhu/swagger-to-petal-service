@@ -3,7 +3,7 @@ import { JSONSchema, compile, compileFromFile } from "json-schema-to-typescript"
 import path from "path";
 import fs from "fs";
 
-const docs: OpenAPIV2.Document = require('../../.demodata/api-docs-mcc.json');
+const docs: OpenAPIV2.Document = require('../../.demodata/api-docs.json');
 
 ; ( async function init() {
 
