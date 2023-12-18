@@ -7,3 +7,5 @@ export function getTypeNameFromRef($ref: string) {
         .map((str) => _.upperFirst(str))
         .join("");
 }
+
+// 三个数相加

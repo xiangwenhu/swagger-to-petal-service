@@ -9,6 +9,7 @@ const docs: OpenAPIV2.Document = require("../../.demodata/api-docs.json");
 
 interface APIItem extends OpenAPIV2.OperationObject {
     method: OpenAPIV2.HttpMethods;
+    path: string;
 }
 
 enum ParametersType {
@@ -44,6 +45,7 @@ function toList(docs: OpenAPIV2.Document) {
             const opObj: OpenAPIV2.OperationObject<any> =
                 pathItemObj[method as OpenAPIV2.HttpMethods];
             apis.push({
+                path,
                 method: method,
                 ...opObj,
             });
@@ -52,11 +54,8 @@ function toList(docs: OpenAPIV2.Document) {
     return apis;
 }
 
-function toService(apis: APIItem[]) {
-    const queryTypeNames: string[] = [];
-    const pathTypeNames: string[] = [];
-    const bodyTypeNames: string[] = [];
-    const resTypeNames: string[] = [];
+function getResTypeNames(apis: APIItem[]) {
+    const typeNames: string[] = [];
 
     apis.forEach((api: APIItem) => {
         // 200
@@ -66,7 +65,7 @@ function toService(apis: APIItem[]) {
                 const referenceObject = okResponse as OpenAPIV2.ReferenceObject;
                 const typeName = getTypeNameFromRef(referenceObject.$ref);
                 if (typeName) {
-                    resTypeNames.push(typeName);
+                    typeNames.push(typeName);
                 }
             } else {
                 const res = okResponse as OpenAPIV2.ResponseObject;
@@ -78,16 +77,60 @@ function toService(apis: APIItem[]) {
                             referenceObject.$ref
                         );
                         if (typeName) {
-                            resTypeNames.push(typeName);
+                            typeNames.push(typeName);
                         }
                     } else {
                         const typeName = `Res${upperFirst(api.operationId)}`;
-                        resTypeNames.push(typeName);
+                        typeNames.push(typeName);
                     }
                 }
             }
         }
     });
+}
+
+function getPathTypeNames(apis: APIItem[]) {
+    const typeNames: string[] = [];
+
+    apis.forEach((api: APIItem) => {
+        const parameters = api.parameters || [];
+
+        parameters.forEach((param) => {
+            if ("$ref" in param) {
+                const referenceObject = param as OpenAPIV2.ReferenceObject;
+                throw new Error('暂未支持 reference parameter');
+                // TODO::
+                // const typeName = getTypeNameFromRef(referenceObject.$ref);
+                // if (typeName) {
+                //     typeNames.push(typeName);
+                // }
+            } else {
+                const parameter = param as OpenAPIV2.Parameter;
+                if (parameter.schema) {
+                    if (parameter.schema?.$ref) {
+                        const referenceObject =
+                            parameter.schema as OpenAPIV2.ReferenceObject;
+                        const typeName = getTypeNameFromRef(
+                            referenceObject.$ref
+                        );
+                        if (typeName) {
+                            typeNames.push(typeName);
+                        }
+                    } else {
+                        const typeName = `Res${upperFirst(api.operationId)}`;
+                        typeNames.push(typeName);
+                    }
+                }
+            }
+        });
+    });
+}
+
+function toService(apis: APIItem[]) {
+    const queryTypeNames: string[] = [];
+    const pathTypeNames: string[] = [];
+    const bodyTypeNames: string[] = [];
+    const resTypeNames: string[] = [];
 
     console.log("resTypeNames", resTypeNames);
 }
