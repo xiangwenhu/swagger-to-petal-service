@@ -89,6 +89,33 @@ function getResTypeNames(apis: APIItem[]) {
     });
 }
 
+function groupTagApis(
+    tags: OpenAPIV2.TagObject[],
+    apis: APIItem[]
+): {
+    tag: OpenAPIV2.TagObject;
+    apis: APIItem[];
+}[] {
+    const tgs = tags.map((tag) => {
+        return {
+            tag,
+            apis: apis.filter((api) => (api.tags || []).includes(tag.name)),
+        };
+    });
+
+    const noTagApis = apis.filter(api=> !Array.isArray(api.tags) || api.tags.length === 0);
+    if(noTagApis.length > 0){
+        tgs.push({
+            tag: {
+                name: "未分组",
+            },
+            apis: noTagApis
+        })
+    }
+
+    return tgs;
+}
+
 function getPathTypeNames(apis: APIItem[]) {
     const typeNames: string[] = [];
 
@@ -98,7 +125,7 @@ function getPathTypeNames(apis: APIItem[]) {
         parameters.forEach((param) => {
             if ("$ref" in param) {
                 const referenceObject = param as OpenAPIV2.ReferenceObject;
-                throw new Error('暂未支持 reference parameter');
+                throw new Error("暂未支持 reference parameter");
                 // TODO::
                 // const typeName = getTypeNameFromRef(referenceObject.$ref);
                 // if (typeName) {
@@ -138,5 +165,6 @@ function toService(apis: APIItem[]) {
 (async function init() {
     // console.log("apis:", apis.length);
     const apis = toList(docs);
+    const tagGroups = groupTagApis(docs.tags || [], apis);
     toService(apis);
 })();
