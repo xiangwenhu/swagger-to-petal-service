@@ -1,11 +1,12 @@
-import { OpenAPIV2 } from "openapi-types";
-import { JSONSchema, compile } from "json-schema-to-typescript";
-import path from "path";
-import fs from "fs";
 import { upperFirst } from "lodash";
+import { OpenAPIV2 } from "openapi-types";
+import NameFactory from "../util/NameFactory";
 import { getTypeNameFromRef } from "../util/docs";
+import { JSONSchema, compile } from "json-schema-to-typescript";
+import fs from "fs"
+import path from "path";
 
-const docs: OpenAPIV2.Document = require("../../.demodata/api-docs.json");
+const docs: OpenAPIV2.Document = require("../../.demodata/api-docs-2.json");
 
 interface APIItem extends OpenAPIV2.OperationObject {
     method: OpenAPIV2.HttpMethods;
@@ -54,41 +55,6 @@ function toList(docs: OpenAPIV2.Document) {
     return apis;
 }
 
-function getResTypeNames(apis: APIItem[]) {
-    const typeNames: string[] = [];
-
-    apis.forEach((api: APIItem) => {
-        // 200
-        const okResponse: OpenAPIV2.Response | undefined = api.responses[200];
-        if (okResponse) {
-            if ("$ref" in okResponse) {
-                const referenceObject = okResponse as OpenAPIV2.ReferenceObject;
-                const typeName = getTypeNameFromRef(referenceObject.$ref);
-                if (typeName) {
-                    typeNames.push(typeName);
-                }
-            } else {
-                const res = okResponse as OpenAPIV2.ResponseObject;
-                if (res.schema) {
-                    if (res.schema?.$ref) {
-                        const referenceObject =
-                            res.schema as OpenAPIV2.ReferenceObject;
-                        const typeName = getTypeNameFromRef(
-                            referenceObject.$ref
-                        );
-                        if (typeName) {
-                            typeNames.push(typeName);
-                        }
-                    } else {
-                        const typeName = `Res${upperFirst(api.operationId)}`;
-                        typeNames.push(typeName);
-                    }
-                }
-            }
-        }
-    });
-}
-
 function groupTagApis(
     tags: OpenAPIV2.TagObject[],
     apis: APIItem[]
@@ -103,14 +69,16 @@ function groupTagApis(
         };
     });
 
-    const noTagApis = apis.filter(api=> !Array.isArray(api.tags) || api.tags.length === 0);
-    if(noTagApis.length > 0){
+    const noTagApis = apis.filter(
+        (api) => !Array.isArray(api.tags) || api.tags.length === 0
+    );
+    if (noTagApis.length > 0) {
         tgs.push({
             tag: {
                 name: "未分组",
             },
-            apis: noTagApis
-        })
+            apis: noTagApis,
+        });
     }
 
     return tgs;
@@ -153,13 +121,117 @@ function getPathTypeNames(apis: APIItem[]) {
     });
 }
 
-function toService(apis: APIItem[]) {
-    const queryTypeNames: string[] = [];
-    const pathTypeNames: string[] = [];
-    const bodyTypeNames: string[] = [];
-    const resTypeNames: string[] = [];
+async function toService(apis: APIItem[]) {
+    const nf = new NameFactory({
+        firstToUpper: true,
+    });
 
-    console.log("resTypeNames", resTypeNames);
+    const resTypes: string[] = [];
+    const definitionTypes = await genDefinitionTypes(docs);
+    for (let i = 0; i < apis.length; i++) {
+        const api = apis[i];
+        try {
+            // response
+            const baseType = nf.genName(api.path);
+            const resType = await genResponse(
+                api,
+                {
+                    baseType,
+                    prefix: "Res",
+                },
+                docs
+            );
+
+            resTypes.push(resType);
+
+            //
+        } catch (err) {
+            debugger;
+        }
+    }
+
+    const results = definitionTypes.concat(resTypes)
+
+    fs.writeFileSync(path.join(__dirname, "../../demotestss/test.ts"), results.join("\r\n"))
+}
+
+async function genDefinitionTypes(docs: OpenAPIV2.Document) {
+    const types: string[] = [];
+    const definitions = docs.definitions || {};
+    for (let [typeName, schema] of Object.entries(definitions)) {
+
+        if(typeName === "PageInfoTreeVo") {
+            debugger;
+        }
+
+        const tmpDefinitions = {...definitions};
+        delete tmpDefinitions[`#/definitions/${typeName}`]
+
+        const cSchema = {...schema, definitions: tmpDefinitions}
+
+        const typeStr = await compile(cSchema as any, typeName, {
+            bannerComment: "",
+            unknownAny: false,
+            /**
+             * 不申明外部
+             */
+            declareExternallyReferenced: false,
+            $refOptions: {
+                
+            }
+        });
+
+        types.push(typeStr);
+    }
+    return types;
+}
+
+interface GenResponseOptions {
+    baseType: string;
+    prefix?: string;
+}
+
+async function genResponse(
+    api: APIItem,
+    options: GenResponseOptions,
+    docs: OpenAPIV2.Document
+) {
+    const okResponse: OpenAPIV2.Response | undefined = api.responses[200];
+    let schema: JSONSchema | undefined = undefined;
+    if (okResponse) {
+        if ("$ref" in okResponse) {
+            const refType = getTypeNameFromRef(okResponse.$ref);
+            return `export type ${options.prefix || ""}${
+                options.baseType
+            } = ${refType}`;
+        } else {
+            const res = okResponse as OpenAPIV2.ResponseObject;
+            if (res.schema) {
+                if (res.schema.$ref) {
+                    const refType = getTypeNameFromRef(res.schema.$ref);
+                    return `export type ${options.prefix || ""}${
+                        options.baseType
+                    } = ${refType}`;
+                }
+                schema = { ...res.schema } as JSONSchema;
+            }
+        }
+    }
+    if (schema === undefined) return "";
+    schema.definitions = docs.definitions as any;
+    const types = await compile(
+        schema,
+        `${options.prefix}${options.baseType}`,
+        {
+            bannerComment: "",
+            unknownAny: false,
+            /**
+             * 不申明外部
+             */
+            declareExternallyReferenced: false,
+        }
+    );
+    return types;
 }
 
 (async function init() {

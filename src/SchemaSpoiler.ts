@@ -5,7 +5,7 @@ const TS_W_KEYS = ['items', 'properties']
 
 export default class SchemaSpoiler {
     private docs: OpenAPIV2.Document | OpenAPIV3.Document | OpenAPIV3_1.Document;
-    constructor(docs: OpenAPIV2.Document | OpenAPIV3.Document | OpenAPIV3_1.Document;) {
+    constructor(docs: OpenAPIV2.Document | OpenAPIV3.Document | OpenAPIV3_1.Document) {
         this.docs = docs;
     }
 

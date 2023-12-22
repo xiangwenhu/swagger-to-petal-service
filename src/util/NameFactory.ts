@@ -1,3 +1,5 @@
+import _ from "lodash";
+
 interface ExistFunction {
     (name: string): boolean;
 }
@@ -7,15 +9,6 @@ interface NameHandler {
         name: string,
         options: { isExist: ExistFunction } & NameFactoryOptions
     ): string;
-}
-
-function urlToName(strArr: string[]) {
-    return strArr
-        .map((str, index) => {
-            return str.startsWith(":") ? undefined : _.upperFirst(str);
-        })
-        .filter(Boolean)
-        .join("");
 }
 
 function getValidWords(url: string) {
@@ -28,7 +21,10 @@ function getValidWords(url: string) {
 }
 0;
 
-const nameHandler: NameHandler = (pathValue: string, { isExist, minWords }) => {
+const nameHandler: NameHandler = (
+    pathValue: string,
+    { isExist  }
+) => {
     let name: string;
 
     let words = getValidWords(pathValue);
@@ -74,13 +70,16 @@ interface NameFactoryOptions {
      * 最小单词数，默认2
      */
     minWords?: number;
+
+    firstToUpper?: boolean;
 }
 
 const DEFAULT_OPTIONS: NameFactoryOptions = {
     minWords: 2,
+    firstToUpper: false,
 };
 
-class NameFactory {
+export default class NameFactory {
     private options: NameFactoryOptions = {
         minWords: 2,
     };
@@ -96,12 +95,22 @@ class NameFactory {
     };
 
     genName(path: string, handler: NameHandler = nameHandler) {
-        const name = handler.call(null, path, {
+        let name = handler.call(null, path, {
             isExist: this.isExist,
         });
+
+        const { firstToUpper } = this.options;
+
+        if (firstToUpper !== true) {
+            name = _.lowerFirst(name);
+        }
 
         this.#names.add(name);
 
         return name;
+    }
+
+    getNames() {
+        return [...this.#names.values()];
     }
 }
