@@ -1,12 +1,12 @@
 import { upperFirst } from "lodash";
 import { OpenAPIV2 } from "openapi-types";
 import NameFactory from "../util/NameFactory";
-import { getTypeNameFromRef } from "../util/docs";
+import { getTypeNameFromRef } from "../util/doc";
 import { JSONSchema, compile } from "json-schema-to-typescript";
-import fs from "fs"
+import fs from "fs";
 import path from "path";
 
-const docs: OpenAPIV2.Document = require("../../.demodata/api-docs-2.json");
+const doc: OpenAPIV2.Document = require("../../.demodata/api-docs-2.json");
 
 interface APIItem extends OpenAPIV2.OperationObject {
     method: OpenAPIV2.HttpMethods;
@@ -32,16 +32,16 @@ enum ParametersType {
     formData = "formData",
 }
 
-function toList(docs: OpenAPIV2.Document) {
-    if (!docs.paths) {
+function toList(doc: OpenAPIV2.Document) {
+    if (!doc.paths) {
         return [];
     }
-    const paths = Object.keys(docs.paths);
+    const paths = Object.keys(doc.paths);
 
     const apis: APIItem[] = [];
     for (let i = 0; i < paths.length; i++) {
         const path = paths[i];
-        const pathItemObj: OpenAPIV2.PathItemObject = docs.paths[path];
+        const pathItemObj: OpenAPIV2.PathItemObject = doc.paths[path];
         Object.keys(pathItemObj).forEach((method) => {
             const opObj: OpenAPIV2.OperationObject<any> =
                 pathItemObj[method as OpenAPIV2.HttpMethods];
@@ -84,102 +84,84 @@ function groupTagApis(
     return tgs;
 }
 
-function getPathTypeNames(apis: APIItem[]) {
-    const typeNames: string[] = [];
-
-    apis.forEach((api: APIItem) => {
-        const parameters = api.parameters || [];
-
-        parameters.forEach((param) => {
-            if ("$ref" in param) {
-                const referenceObject = param as OpenAPIV2.ReferenceObject;
-                throw new Error("暂未支持 reference parameter");
-                // TODO::
-                // const typeName = getTypeNameFromRef(referenceObject.$ref);
-                // if (typeName) {
-                //     typeNames.push(typeName);
-                // }
-            } else {
-                const parameter = param as OpenAPIV2.Parameter;
-                if (parameter.schema) {
-                    if (parameter.schema?.$ref) {
-                        const referenceObject =
-                            parameter.schema as OpenAPIV2.ReferenceObject;
-                        const typeName = getTypeNameFromRef(
-                            referenceObject.$ref
-                        );
-                        if (typeName) {
-                            typeNames.push(typeName);
-                        }
-                    } else {
-                        const typeName = `Res${upperFirst(api.operationId)}`;
-                        typeNames.push(typeName);
-                    }
-                }
-            }
-        });
-    });
-}
-
 async function toService(apis: APIItem[]) {
     const nf = new NameFactory({
         firstToUpper: true,
     });
 
     const resTypes: string[] = [];
-    const definitionTypes = await genDefinitionTypes(docs);
+    const reqTypes: string[] = [];
+    // definitions
+    const definitionsTypes = await genDefinitionsTypes(doc);
     for (let i = 0; i < apis.length; i++) {
         const api = apis[i];
         try {
             // response
             const baseType = nf.genName(api.path);
-            const resType = await genResponse(
+            const resType = await genResponseTypes(
                 api,
                 {
                     baseType,
                     prefix: "Res",
                 },
-                docs
+                doc
             );
-
             resTypes.push(resType);
 
-            //
+            const reqType = await genRequestParamsTypes(
+                api,
+                {
+                    baseType,
+                    prefix: "Req",
+                },
+                doc
+            );
+            reqTypes.push(reqType);
+
+            //req
         } catch (err) {
             debugger;
         }
     }
 
-    const results = definitionTypes.concat(resTypes)
+    const results = definitionsTypes.concat(resTypes);
 
-    fs.writeFileSync(path.join(__dirname, "../../demotestss/test.ts"), results.join("\r\n"))
+    fs.writeFileSync(
+        path.join(__dirname, "../../demotestss/test.ts"),
+        results.join("\r\n")
+    );
 }
 
-async function genDefinitionTypes(docs: OpenAPIV2.Document) {
+async function genDefinitionsTypes(doc: OpenAPIV2.Document) {
     const types: string[] = [];
-    const definitions = docs.definitions || {};
+    const definitions = doc.definitions || {};
     for (let [typeName, schema] of Object.entries(definitions)) {
+        const defPath = `#/definitions/${typeName}`;
+        const tmpDefinitions = { ...definitions };
+        delete tmpDefinitions[defPath];
 
-        if(typeName === "PageInfoTreeVo") {
-            debugger;
-        }
+        const cSchema = { ...schema, definitions: tmpDefinitions };
 
-        const tmpDefinitions = {...definitions};
-        delete tmpDefinitions[`#/definitions/${typeName}`]
+        const hasSelfReference = JSON.stringify(schema).includes(defPath);
 
-        const cSchema = {...schema, definitions: tmpDefinitions}
+        const fTypeName = hasSelfReference ? `${typeName}_1` : typeName;
+        cSchema.title = fTypeName;
 
-        const typeStr = await compile(cSchema as any, typeName, {
+        let typeStr = await compile(cSchema as any, fTypeName, {
+            additionalProperties: false,
             bannerComment: "",
             unknownAny: false,
             /**
              * 不申明外部
              */
             declareExternallyReferenced: false,
-            $refOptions: {
-                
-            }
+            $refOptions: {},
         });
+
+        if (hasSelfReference) {
+            const regex = new RegExp(fTypeName, "g");
+            typeStr = typeStr.replace(regex, typeName);
+        }
 
         types.push(typeStr);
     }
@@ -191,10 +173,27 @@ interface GenResponseOptions {
     prefix?: string;
 }
 
-async function genResponse(
+function adjustSchema(schema: OpenAPIV2.SchemaObject | OpenAPIV2.ReferenceObject, doc: OpenAPIV2.Document){
+    // if ("$ref" in schema) {
+    //     // TODO::
+    // } else {
+    //     const newSchema = schema as OpenAPIV2.SchemaObject;
+    //     if (newSchema.schema) {
+    //         if (newSchema.schema.$ref) {
+    //             const refType = getTypeNameFromRef(newSchema.schema.$ref);
+    //             return `export type ${options.prefix || ""}${
+    //                 options.baseType
+    //             } = ${refType}`;
+    //         }
+    //         schema = { ...res.schema } as JSONSchema;
+    //     }
+    // }
+}
+
+async function genResponseTypes(
     api: APIItem,
     options: GenResponseOptions,
-    docs: OpenAPIV2.Document
+    doc: OpenAPIV2.Document
 ) {
     const okResponse: OpenAPIV2.Response | undefined = api.responses[200];
     let schema: JSONSchema | undefined = undefined;
@@ -218,7 +217,62 @@ async function genResponse(
         }
     }
     if (schema === undefined) return "";
-    schema.definitions = docs.definitions as any;
+    schema.definitions = doc.definitions as any;
+    const types = await compile(
+        schema,
+        `${options.prefix}${options.baseType}`,
+        {
+            bannerComment: "",
+            unknownAny: false,
+            /**
+             * 不申明外部
+             */
+            declareExternallyReferenced: false,
+        }
+    );
+    return types;
+}
+
+async function genRequestParamsTypes(
+    api: APIItem,
+    options: GenResponseOptions,
+    doc: OpenAPIV2.Document
+) {
+    if (!Array.isArray(api.parameters) || api.parameters.length === 0) {
+        return "";
+    }
+
+    const groupParams = api.parameters.reduce(
+        (
+            g: Record<string, any>,
+            cur: OpenAPIV2.ReferenceObject | OpenAPIV2.Parameter
+        ) => {
+            if (g.$ref) {
+                console.error(`咱不支持 ReferenceObject parameter`);
+                return g;
+            } else {
+                const parameter = cur as OpenAPIV2.Parameter;
+                if (g[parameter.in]) {
+                    g[parameter.in] = {};
+                }
+                g[parameter.in] = {
+                    [parameter.name]: parameter,
+                };
+                return g;
+            }
+        },
+        {}
+    );
+
+    const schema = {
+        "type": "object",
+        "properties": {
+            ...groupParams
+        },   
+        definitions: doc.definitions as any
+    } as any;
+
+
     const types = await compile(
         schema,
         `${options.prefix}${options.baseType}`,
@@ -236,7 +290,7 @@ async function genResponse(
 
 (async function init() {
     // console.log("apis:", apis.length);
-    const apis = toList(docs);
-    const tagGroups = groupTagApis(docs.tags || [], apis);
+    const apis = toList(doc);
+    const tagGroups = groupTagApis(doc.tags || [], apis);
     toService(apis);
 })();
