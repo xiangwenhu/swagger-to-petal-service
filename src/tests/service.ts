@@ -5,8 +5,9 @@ import { getTypeNameFromRef } from "../util/doc";
 import { JSONSchema, compile } from "json-schema-to-typescript";
 import fs from "fs";
 import path from "path";
+import _ from "lodash";
 
-const doc: OpenAPIV2.Document = require("../../.demodata/api-docs-2.json");
+const doc: OpenAPIV2.Document = require("../../.demodata/api-docs.json");
 
 interface APIItem extends OpenAPIV2.OperationObject {
     method: OpenAPIV2.HttpMethods;
@@ -124,7 +125,7 @@ async function toService(apis: APIItem[]) {
         }
     }
 
-    const results = definitionsTypes.concat(resTypes);
+    const results = definitionsTypes.concat(reqTypes).concat(resTypes);
 
     fs.writeFileSync(
         path.join(__dirname, "../../demotestss/test.ts"),
@@ -173,7 +174,10 @@ interface GenResponseOptions {
     prefix?: string;
 }
 
-function adjustSchema(schema: OpenAPIV2.SchemaObject | OpenAPIV2.ReferenceObject, doc: OpenAPIV2.Document){
+function adjustSchema(
+    schema: OpenAPIV2.SchemaObject | OpenAPIV2.ReferenceObject,
+    doc: OpenAPIV2.Document
+) {
     // if ("$ref" in schema) {
     //     // TODO::
     // } else {
@@ -252,12 +256,44 @@ async function genRequestParamsTypes(
                 return g;
             } else {
                 const parameter = cur as OpenAPIV2.Parameter;
-                if (g[parameter.in]) {
-                    g[parameter.in] = {};
+                const inType = parameter.in;
+
+                let aParameter: OpenAPIV2.Parameter = _.cloneDeep(parameter);
+                let schema: any = aParameter;
+                if (schema.schema) {
+                    if (schema.schema.$ref) {
+                        const refPath = schema.schema.$ref.replace("#/","").replace(/\//g, ".");
+                        const schemaData = _.get(doc, refPath)
+                        schema = {
+                            required: aParameter.required,
+                            ...schemaData
+                        }
+                    } else {
+                        schema = {
+                            ...schema,
+                            ...schema.schema,
+                        };
+                    }
+                    delete schema.schema;
                 }
-                g[parameter.in] = {
-                    [parameter.name]: parameter,
-                };
+
+                switch (inType) {
+                    case "body":
+                        g.body = schema;
+                        break;
+                    case "formData":
+                        // TODO::
+                        break;
+                    default:
+                        if (!g[parameter.in]) {
+                            g[parameter.in] = {
+                                type: "object",
+                                properties: {},
+                            };
+                        }
+                        g[parameter.in].properties[parameter.name] = schema;
+                }
+
                 return g;
             }
         },
@@ -265,13 +301,14 @@ async function genRequestParamsTypes(
     );
 
     const schema = {
-        "type": "object",
-        "properties": {
-            ...groupParams
-        },   
-        definitions: doc.definitions as any
+        type: "object",
+        properties: {
+            ...groupParams,
+        },
+        // TODO:: 按需
+        required: Object.keys(groupParams),
+        definitions: doc.definitions as any,
     } as any;
-
 
     const types = await compile(
         schema,
@@ -283,6 +320,7 @@ async function genRequestParamsTypes(
              * 不申明外部
              */
             declareExternallyReferenced: false,
+            additionalProperties: false,
         }
     );
     return types;
