@@ -1,17 +1,28 @@
-import { upperFirst } from "lodash";
+import fs from "fs";
+import { JSONSchema, compile } from "json-schema-to-typescript";
+import _ from "lodash";
 import { OpenAPIV2 } from "openapi-types";
+import path from "path";
 import NameFactory from "../util/NameFactory";
 import { getTypeNameFromRef } from "../util/doc";
-import { JSONSchema, compile } from "json-schema-to-typescript";
-import fs from "fs";
-import path from "path";
-import _ from "lodash";
 
-const doc: OpenAPIV2.Document = require("../../.demodata/api-docs.json");
+const doc: OpenAPIV2.Document = require("../../.demodata/api-docs-2.json");
 
 interface APIItem extends OpenAPIV2.OperationObject {
     method: OpenAPIV2.HttpMethods;
     path: string;
+    baseType: string;
+    types: {
+        req: {
+            type: string;
+            properties: Record<string, string>;
+        }
+        res: {
+            type: string;
+        };
+        // TODO::
+        header: Record<string, string>;
+    }
 }
 
 enum ParametersType {
@@ -85,7 +96,7 @@ function groupTagApis(
     return tgs;
 }
 
-async function toService(apis: APIItem[]) {
+async function generateTypes(apis: APIItem[]) {
     const nf = new NameFactory({
         firstToUpper: true,
     });
@@ -99,36 +110,40 @@ async function toService(apis: APIItem[]) {
         try {
             // response
             const baseType = nf.genName(api.path);
+
+            api.types = {
+                res: {
+                    type: `Res${baseType}`,
+                },
+                req: {
+                    type: `Req${baseType}`,
+                    properties: {}
+                },
+                header: {}
+            };
+            api.baseType = baseType;
             const resType = await genResponseTypes(
                 api,
-                {
-                    baseType,
-                    prefix: "Res",
-                },
                 doc
             );
             resTypes.push(resType);
 
             const reqType = await genRequestParamsTypes(
                 api,
-                {
-                    baseType,
-                    prefix: "Req",
-                },
                 doc
             );
             reqTypes.push(reqType);
 
             //req
         } catch (err) {
-            debugger;
+            console.log(err);
         }
     }
 
     const results = definitionsTypes.concat(reqTypes).concat(resTypes);
 
     fs.writeFileSync(
-        path.join(__dirname, "../../demotestss/test.ts"),
+        path.join(__dirname, "../../.demoService/test.d.ts"),
         results.join("\r\n")
     );
 }
@@ -174,29 +189,9 @@ interface GenResponseOptions {
     prefix?: string;
 }
 
-function adjustSchema(
-    schema: OpenAPIV2.SchemaObject | OpenAPIV2.ReferenceObject,
-    doc: OpenAPIV2.Document
-) {
-    // if ("$ref" in schema) {
-    //     // TODO::
-    // } else {
-    //     const newSchema = schema as OpenAPIV2.SchemaObject;
-    //     if (newSchema.schema) {
-    //         if (newSchema.schema.$ref) {
-    //             const refType = getTypeNameFromRef(newSchema.schema.$ref);
-    //             return `export type ${options.prefix || ""}${
-    //                 options.baseType
-    //             } = ${refType}`;
-    //         }
-    //         schema = { ...res.schema } as JSONSchema;
-    //     }
-    // }
-}
 
 async function genResponseTypes(
     api: APIItem,
-    options: GenResponseOptions,
     doc: OpenAPIV2.Document
 ) {
     const okResponse: OpenAPIV2.Response | undefined = api.responses[200];
@@ -204,17 +199,13 @@ async function genResponseTypes(
     if (okResponse) {
         if ("$ref" in okResponse) {
             const refType = getTypeNameFromRef(okResponse.$ref);
-            return `export type ${options.prefix || ""}${
-                options.baseType
-            } = ${refType}`;
+            return `export type ${api.types.res.type} = ${refType}`;
         } else {
             const res = okResponse as OpenAPIV2.ResponseObject;
             if (res.schema) {
                 if (res.schema.$ref) {
                     const refType = getTypeNameFromRef(res.schema.$ref);
-                    return `export type ${options.prefix || ""}${
-                        options.baseType
-                    } = ${refType}`;
+                    return `export type ${api.types.res.type} = ${refType}`;
                 }
                 schema = { ...res.schema } as JSONSchema;
             }
@@ -224,7 +215,7 @@ async function genResponseTypes(
     schema.definitions = doc.definitions as any;
     const types = await compile(
         schema,
-        `${options.prefix}${options.baseType}`,
+        api.types.res.type,
         {
             bannerComment: "",
             unknownAny: false,
@@ -239,13 +230,11 @@ async function genResponseTypes(
 
 async function genRequestParamsTypes(
     api: APIItem,
-    options: GenResponseOptions,
     doc: OpenAPIV2.Document
 ) {
     if (!Array.isArray(api.parameters) || api.parameters.length === 0) {
         return "";
     }
-
     const groupParams = api.parameters.reduce(
         (
             g: Record<string, any>,
@@ -256,13 +245,13 @@ async function genRequestParamsTypes(
                 return g;
             } else {
                 const parameter = cur as OpenAPIV2.Parameter;
-                const inType = parameter.in;
+                const inType = _.upperFirst(parameter.in);
 
                 let aParameter: OpenAPIV2.Parameter = _.cloneDeep(parameter);
                 let schema: any = aParameter;
                 if (schema.schema) {
                     if (schema.schema.$ref) {
-                        const refPath = schema.schema.$ref.replace("#/","").replace(/\//g, ".");
+                        const refPath = schema.schema.$ref.replace("#/", "").replace(/\//g, ".");
                         const schemaData = _.get(doc, refPath)
                         schema = {
                             required: aParameter.required,
@@ -278,20 +267,21 @@ async function genRequestParamsTypes(
                 }
 
                 switch (inType) {
-                    case "body":
-                        g.body = schema;
+                    case "Body":
+                        g[inType] = schema;
                         break;
-                    case "formData":
+                    case "FormData":
+                        g[inType] = undefined;
                         // TODO::
                         break;
                     default:
-                        if (!g[parameter.in]) {
-                            g[parameter.in] = {
+                        if (!g[inType]) {
+                            g[inType] = {
                                 type: "object",
                                 properties: {},
                             };
                         }
-                        g[parameter.in].properties[parameter.name] = schema;
+                        g[inType].properties[parameter.name] = schema;
                 }
 
                 return g;
@@ -299,6 +289,10 @@ async function genRequestParamsTypes(
         },
         {}
     );
+
+    Object.keys(groupParams).forEach(key => {
+        api.types.req.properties[key] = `${api.types.req.type}.${key}`
+    })
 
     const schema = {
         type: "object",
@@ -312,7 +306,7 @@ async function genRequestParamsTypes(
 
     const types = await compile(
         schema,
-        `${options.prefix}${options.baseType}`,
+        api.types.req.type,
         {
             bannerComment: "",
             unknownAny: false,
@@ -326,9 +320,44 @@ async function genRequestParamsTypes(
     return types;
 }
 
+
+const orderedReqParams = ['Path', 'Query', 'Body', 'FormData']
+function generateReqParams(api: APIItem) {
+    return orderedReqParams.map(paramName => {
+        const paramType = api.types.req.properties[paramName]
+        if (!paramType) return undefined;
+        return `${paramName}: ${paramType}`
+    }).filter(Boolean).join(', ')
+}
+
+function generateService(apis: APIItem[]) {
+
+    const results = apis.map(api => {
+
+        const reqParams = generateReqParams(api);
+
+        return `export function ${_.lowerFirst(api.baseType)}(${reqParams}): Promise<${api.types.res.type}>{
+            return axios({
+                method: '${api.method}
+            })
+        }
+    
+    `}
+    )
+
+    fs.writeFileSync(
+        path.join(__dirname, "../../.demoService/test.ts"),
+        results.join("\r\n")
+    );
+
+}
+
 (async function init() {
     // console.log("apis:", apis.length);
     const apis = toList(doc);
     const tagGroups = groupTagApis(doc.tags || [], apis);
-    toService(apis);
+    await generateTypes(apis);
+
+    await generateService(apis);
+    debugger;
 })();
