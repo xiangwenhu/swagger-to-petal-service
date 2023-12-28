@@ -3,10 +3,19 @@ import { JSONSchema, compile } from "json-schema-to-typescript";
 import _ from "lodash";
 import { OpenAPIV2 } from "openapi-types";
 import path from "path";
-import NameFactory from "../util/NameFactory";
-import { getTypeNameFromRef } from "../util/doc";
+import NameFactory from "./util/NameFactory";
+import { getTypeNameFromRef } from "./util/doc";
+import { format } from "./util/prettier";
+import { copyFolder } from "./util/fs";
 
-const doc: OpenAPIV2.Document = require("../../.demodata/api-docs.json");
+const config = {
+    url: path.join(__dirname, "../.demodata/api-docs.json"),
+    builtinFolder: path.join(__dirname, "./builtin"),
+    targetFolder: path.join(__dirname, "../.demoService"),
+
+}
+
+const doc: OpenAPIV2.Document = JSON.parse(fs.readFileSync(config.url, "utf8"));
 
 interface APIItem extends OpenAPIV2.OperationObject {
     method: OpenAPIV2.HttpMethods;
@@ -25,25 +34,6 @@ interface APIItem extends OpenAPIV2.OperationObject {
         // TODO::
         header: Record<string, string>;
     };
-}
-
-enum ParametersType {
-    /**
-     * Body参数
-     */
-    body = "body",
-    /**
-     * Path参数
-     */
-    path = "path",
-    /**
-     * Query参数
-     */
-    query = "query",
-    /**
-     * FormData
-     */
-    formData = "formData",
 }
 
 function toList(doc: OpenAPIV2.Document) {
@@ -112,11 +102,6 @@ async function generateTypes(apis: APIItem[]) {
         try {
             // response
             const baseType = nf.genName(api.path);
-
-            if(api.path.includes("detail/template")){
-                debugger
-            }
-
             api.types = {
                 res: {
                     has: true,
@@ -144,10 +129,7 @@ async function generateTypes(apis: APIItem[]) {
 
     const results = definitionsTypes.concat(reqTypes).concat(resTypes);
 
-    fs.writeFileSync(
-        path.join(__dirname, "../../.demoService/test.types.ts"),
-        results.join("\r\n")
-    );
+    return results.join('\r\n');
 }
 
 async function genDefinitionsTypes(doc: OpenAPIV2.Document) {
@@ -308,17 +290,6 @@ async function genRequestParamsTypes(api: APIItem, doc: OpenAPIV2.Document) {
     return types;
 }
 
-const orderedReqParams = ["Path", "Query", "Body", "FormData"];
-function generateReqParams(api: APIItem) {
-    return orderedReqParams
-        .map((paramName) => {
-            const paramType = api.types.req.properties[paramName];
-            if (!paramType) return undefined;
-            return `${paramName}: ${paramType}`;
-        })
-        .filter(Boolean)
-        .join(", ");
-}
 
 function buildRequestConfig(api: APIItem) {
     const method = api.method;
@@ -387,33 +358,64 @@ function generateService(apis: APIItem[]) {
         const resType = api.types.res.has ? api.types.res.type : "void";
 
         const requestConfig = buildRequestConfig(api);
-        return `export function ${_.lowerFirst(
+        return `
+        /**
+         * ${api.summary}
+         */
+        export function ${_.lowerFirst(
             api.baseType
         )}(${reqParams}): Promise<${resType}>{
-            return axios(${requestConfig})
+            return instance(${requestConfig})
         }
-    
     `;
     });
 
     const importsStr = `import { ${imports.join(
         ", "
-    )} } from "./test.types";\r\n`;
+    )} } from "./service.types";\r\n`;
 
     const content = importsStr + requests.join("\r\n");
+    return content;
+}
 
-    fs.writeFileSync(
-        path.join(__dirname, "../../.demoService/test.ts"),
-        content
-    );
+async function copyBuiltFiles(sourceFolder: string, targetFolder: string) {
+    await copyFolder(sourceFolder, targetFolder);
 }
 
 (async function init() {
     // console.log("apis:", apis.length);
     const apis = toList(doc);
     const tagGroups = groupTagApis(doc.tags || [], apis);
-    await generateTypes(apis);
 
-    await generateService(apis);
+    const typesContent = await generateTypes(apis);
+
+    const formattedTypesContent = await format(typesContent)
+
+    fs.writeFileSync(
+        path.join(config.targetFolder, "service.types.ts"),
+        formattedTypesContent
+    );
+
+
+    const buildInHeader = `
+    import instance from "./builtin/baseService";
+    import { replacePathParams } from "./builtin/util";
+    `;
+
+    for (let i = 0; i < tagGroups.length; i++) {
+        const group = tagGroups[i];
+        const tag = group.tag;
+        const serviceTypes = await generateService(group.apis);
+        const formattedContent = await format(buildInHeader + "\r\n" + serviceTypes)
+
+        fs.writeFileSync(
+            // @ts-ignore
+            path.join(config.targetFolder, `${tag.serviceName}.ts`),
+            formattedContent
+        );
+    }
+
+    await copyBuiltFiles(config.builtinFolder, path.join(config.targetFolder, "builtin"));
+
     debugger;
 })();
