@@ -1,48 +1,17 @@
-import fs from "fs";
-import { JSONSchema, compile } from "json-schema-to-typescript";
-import _ from "lodash";
 import { OpenAPIV2 } from "openapi-types";
-import path from "path";
-import NameFactory from "./util/NameFactory";
-import { getTypeNameFromRef } from "./util/doc";
-import { format } from "./util/prettier";
-import { copyFolder } from "./util/fs";
+import { APIItemV2 } from "./types";
+import { JSONSchema, compile } from "json-schema-to-typescript";
+import { getTypeNameFromRef } from "../../util/doc";
+import _ from "lodash";
+import NameFactory from "../../util/NameFactory";
 
-const config = {
-    url: path.join(__dirname, "../.demodata/api-docs.json"),
-    builtinFolder: path.join(__dirname, "./builtin"),
-    targetFolder: path.join(__dirname, "../.demoService"),
-
-}
-
-const doc: OpenAPIV2.Document = JSON.parse(fs.readFileSync(config.url, "utf8"));
-
-interface APIItem extends OpenAPIV2.OperationObject {
-    method: OpenAPIV2.HttpMethods;
-    path: string;
-    baseType: string;
-    types: {
-        req: {
-            has: boolean;
-            type: string;
-            properties: Record<string, string>;
-        };
-        res: {
-            has: boolean;
-            type: string;
-        };
-        // TODO::
-        header: Record<string, string>;
-    };
-}
-
-function toList(doc: OpenAPIV2.Document) {
+export function toList(doc: OpenAPIV2.Document) {
     if (!doc.paths) {
         return [];
     }
     const paths = Object.keys(doc.paths);
 
-    const apis: APIItem[] = [];
+    const apis: APIItemV2[] = [];
     for (let i = 0; i < paths.length; i++) {
         const path = paths[i];
         const pathItemObj: OpenAPIV2.PathItemObject = doc.paths[path];
@@ -59,12 +28,12 @@ function toList(doc: OpenAPIV2.Document) {
     return apis;
 }
 
-function groupTagApis(
+export function groupTagApis(
     tags: OpenAPIV2.TagObject[],
-    apis: APIItem[]
+    apis: APIItemV2[]
 ): {
     tag: OpenAPIV2.TagObject;
-    apis: APIItem[];
+    apis: APIItemV2[];
 }[] {
     const tgs = tags.map((tag) => {
         return {
@@ -88,50 +57,6 @@ function groupTagApis(
     return tgs;
 }
 
-async function generateTypes(apis: APIItem[]) {
-    const nf = new NameFactory({
-        firstToUpper: true,
-    });
-
-    const resTypes: string[] = [];
-    const reqTypes: string[] = [];
-    // definitions
-    const definitionsTypes = await genDefinitionsTypes(doc);
-    for (let i = 0; i < apis.length; i++) {
-        const api = apis[i];
-        try {
-            // response
-            const baseType = nf.genName(api.path);
-            api.types = {
-                res: {
-                    has: true,
-                    type: `Res${baseType}`,
-                },
-                req: {
-                    has: true,
-                    type: `Req${baseType}`,
-                    properties: {},
-                },
-                header: {},
-            };
-            api.baseType = baseType;
-            const resType = await genResponseTypes(api, doc);
-            if (resType !== undefined) resTypes.push(resType);
-
-            const reqType = await genRequestParamsTypes(api, doc);
-            if (reqType !== undefined) reqTypes.push(reqType);
-
-            //req
-        } catch (err) {
-            console.log(err);
-        }
-    }
-
-    const results = definitionsTypes.concat(reqTypes).concat(resTypes);
-
-    return results.join('\r\n');
-}
-
 async function genDefinitionsTypes(doc: OpenAPIV2.Document) {
     const types: string[] = [];
     const definitions = doc.definitions || {};
@@ -144,7 +69,7 @@ async function genDefinitionsTypes(doc: OpenAPIV2.Document) {
 
         const hasSelfReference = JSON.stringify(schema).includes(defPath);
 
-        const fTypeName = hasSelfReference ? `${typeName}_1` : typeName;
+        const fTypeName = hasSelfReference ? `${typeName}_99999` : typeName;
         cSchema.title = fTypeName;
 
         let typeStr = await compile(cSchema as any, fTypeName, {
@@ -168,7 +93,7 @@ async function genDefinitionsTypes(doc: OpenAPIV2.Document) {
     return types;
 }
 
-async function genResponseTypes(api: APIItem, doc: OpenAPIV2.Document) {
+async function genResponseTypes(api: APIItemV2, doc: OpenAPIV2.Document) {
     const okResponse: OpenAPIV2.Response | undefined = api.responses[200];
     let schema: JSONSchema | undefined = undefined;
     if (okResponse) {
@@ -202,7 +127,7 @@ async function genResponseTypes(api: APIItem, doc: OpenAPIV2.Document) {
     return types;
 }
 
-async function genRequestParamsTypes(api: APIItem, doc: OpenAPIV2.Document) {
+async function genRequestParamsTypes(api: APIItemV2, doc: OpenAPIV2.Document) {
     if (!Array.isArray(api.parameters) || api.parameters.length === 0) {
         api.types.req.has = false;
         return undefined;
@@ -291,7 +216,7 @@ async function genRequestParamsTypes(api: APIItem, doc: OpenAPIV2.Document) {
 }
 
 
-function buildRequestConfig(api: APIItem) {
+function buildRequestConfig(api: APIItemV2) {
     const method = api.method;
 
     const { req } = api.types;
@@ -338,7 +263,7 @@ function buildRequestConfig(api: APIItem) {
     return `{${configArr.join(",\r\n")}}`;
 }
 
-function generateService(apis: APIItem[]) {
+export function generateAPIService(apis: APIItemV2[]) {
     const imports = apis.map((api) => {
         const types = [];
         if (api.types.req.has) {
@@ -378,44 +303,47 @@ function generateService(apis: APIItem[]) {
     return content;
 }
 
-async function copyBuiltFiles(sourceFolder: string, targetFolder: string) {
-    await copyFolder(sourceFolder, targetFolder);
-}
+export  async function generateTypes(apis: APIItemV2[], doc: OpenAPIV2.Document) {
 
-(async function init() {
-    // console.log("apis:", apis.length);
-    const apis = toList(doc);
-    const tagGroups = groupTagApis(doc.tags || [], apis);
+    const nf = new NameFactory({
+        firstToUpper: true,
+    });
 
-    const typesContent = await generateTypes(apis);
+    const resTypes: string[] = [];
+    const reqTypes: string[] = [];
+    // definitions
+    const definitionsTypes = await genDefinitionsTypes(doc);
+    for (let i = 0; i < apis.length; i++) {
+        const api = apis[i];
+        try {
+            // response
+            const baseType = nf.genName({ path: api.path, method: api.method });
+            api.types = {
+                res: {
+                    has: true,
+                    type: `Res${baseType}`,
+                },
+                req: {
+                    has: true,
+                    type: `Req${baseType}`,
+                    properties: {},
+                },
+                header: {},
+            };
+            api.baseType = baseType;
+            const resType = await genResponseTypes(api, doc);
+            if (resType !== undefined) resTypes.push(resType);
 
-    const formattedTypesContent = await format(typesContent)
+            const reqType = await genRequestParamsTypes(api, doc);
+            if (reqType !== undefined) reqTypes.push(reqType);
 
-    fs.writeFileSync(
-        path.join(config.targetFolder, "service.types.ts"),
-        formattedTypesContent
-    );
-
-
-    const buildInHeader = `
-    import instance from "./builtin/baseService";
-    import { replacePathParams } from "./builtin/util";
-    `;
-
-    for (let i = 0; i < tagGroups.length; i++) {
-        const group = tagGroups[i];
-        const tag = group.tag;
-        const serviceTypes = await generateService(group.apis);
-        const formattedContent = await format(buildInHeader + "\r\n" + serviceTypes)
-
-        fs.writeFileSync(
-            // @ts-ignore
-            path.join(config.targetFolder, `${tag.serviceName}.ts`),
-            formattedContent
-        );
+            //req
+        } catch (err) {
+            console.error(`generateTypes error:`, err);
+        }
     }
 
-    await copyBuiltFiles(config.builtinFolder, path.join(config.targetFolder, "builtin"));
+    const results = definitionsTypes.concat(reqTypes).concat(resTypes);
 
-    debugger;
-})();
+    return results.join('\r\n');
+}
