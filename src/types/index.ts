@@ -1,15 +1,19 @@
 
 
+
+export interface ServiceTagObject {
+    name: string;
+    serviceName: string;
+    description?: string;
+}
+
 export interface ServiceFactoryConfig {
     url: string;
     targetFolder: string;
     clearTargetFolder?: boolean;
-    tags: {
-        name: string;
-        serviceName: string;
-        description?: string;
-    }[];
+    tags: ServiceTagObject[];
     unclassifiedTag?: {
         serviceName: string;
-    }
+    },
+    unNameTagToOtherService?: boolean;
 }

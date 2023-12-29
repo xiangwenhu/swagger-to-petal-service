@@ -4,6 +4,7 @@ import { JSONSchema, compile } from "json-schema-to-typescript";
 import { getTypeNameFromRef } from "../../util/doc";
 import _ from "lodash";
 import NameFactory from "../../util/NameFactory";
+import { ServiceTagObject } from "../../types";
 
 export function toList(doc: OpenAPIV2.Document) {
     if (!doc.paths) {
@@ -28,30 +29,61 @@ export function toList(doc: OpenAPIV2.Document) {
     return apis;
 }
 
-export function groupTagApis(
-    tags: OpenAPIV2.TagObject[],
-    apis: APIItemV2[]
+export function groupTagApis({ tags, sTags, otherTagServiceName, unNameTagToOtherService }: {
+    tags: OpenAPIV2.TagObject[];
+    sTags: ServiceTagObject[];
+    otherTagServiceName: string;
+    unNameTagToOtherService: boolean;
+},
+    apis: APIItemV2[],
 ): {
     tag: OpenAPIV2.TagObject;
     apis: APIItemV2[];
 }[] {
-    const tgs = tags.map((tag) => {
-        return {
-            tag,
-            apis: apis.filter((api) => (api.tags || []).includes(tag.name)),
-        };
-    });
+
+    const otherTagGroup: {
+        tag: ServiceTagObject;
+        apis: APIItemV2[];
+    } = {
+        tag: {
+            name: "其他",
+            serviceName: otherTagServiceName || 'other'
+        },
+        apis: []
+    }
+
+    const tgs: {
+        tag: ServiceTagObject;
+        apis: APIItemV2[];
+    }[] = [];
+
+
+    tags.forEach(tag => {
+        const configTag = sTags.find(st => st.name == tag.name);
+        const tagApis = apis.filter((api) => (api.tags || []).includes(tag.name));
+        if (configTag) {
+            tgs.push({
+                tag: {
+                    name: tag.name,
+                    description: configTag.description || tag.description,
+                    serviceName: configTag.serviceName
+                },
+                apis: tagApis
+            })
+        } else if (unNameTagToOtherService) {
+            otherTagGroup.apis.push(...tagApis)
+        }
+    })
+
 
     const noTagApis = apis.filter(
         (api) => !Array.isArray(api.tags) || api.tags.length === 0
     );
-    if (noTagApis.length > 0) {
-        tgs.push({
-            tag: {
-                name: "未分组",
-            },
-            apis: noTagApis,
-        });
+
+    otherTagGroup.apis.push(...noTagApis)
+
+    if (otherTagGroup.apis.length > 0) {
+        tgs.push(otherTagGroup);
     }
 
     return tgs;
@@ -303,7 +335,7 @@ export function generateAPIService(apis: APIItemV2[]) {
     return content;
 }
 
-export  async function generateTypes(apis: APIItemV2[], doc: OpenAPIV2.Document) {
+export async function generateTypes(apis: APIItemV2[], doc: OpenAPIV2.Document) {
 
     const nf = new NameFactory({
         firstToUpper: true,

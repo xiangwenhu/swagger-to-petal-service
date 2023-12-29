@@ -6,10 +6,27 @@ import { ServiceFactoryConfig } from "../../types";
 import { copyFolder } from "../../util/fs";
 import { format } from "../../util/prettier";
 import * as lUtils from "./util";
+import _ from "lodash";
+
+
+
+const DEFAULT_CONFIG: Partial<ServiceFactoryConfig> = {
+    clearTargetFolder: false, // 是否清空目标文件夹
+    unclassifiedTag: {
+        serviceName: "other",
+    },
+    unNameTagToOtherService: false
+}
 
 export default class ServiceFactoryV2 {
 
-    constructor(private doc: OpenAPIV2.Document,  private config: ServiceFactoryConfig) {
+    private oriDoc: OpenAPIV2.Document;
+    private doc!: OpenAPIV2.Document;
+
+    constructor(doc: OpenAPIV2.Document, private config: ServiceFactoryConfig) {
+        this.oriDoc = doc;
+        // this.doc = _.cloneDeep(doc);
+        this.config = _.merge(DEFAULT_CONFIG, config)
     }
 
     private getBuiltInHeader() {
@@ -20,11 +37,17 @@ export default class ServiceFactoryV2 {
     }
 
     async generate() {
+        this.doc = _.cloneDeep(this.oriDoc);
         const { config, doc } = this;
         // 转为列表
         const apis = lUtils.toList(doc);
         // 按照tag分组
-        const tagGroups = lUtils.groupTagApis(doc.tags || [], apis);
+        const tagGroups = lUtils.groupTagApis({
+            tags: doc.tags || [],
+            sTags:  config.tags,
+            unNameTagToOtherService: config.unNameTagToOtherService || false,
+            otherTagServiceName: config.unclassifiedTag?.serviceName || 'other',
+        }, apis);
         // 生成Types
         const typesContent = await lUtils.generateTypes(apis, doc);
         // 美化
