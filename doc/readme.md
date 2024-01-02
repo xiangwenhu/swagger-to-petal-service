@@ -38,3 +38,6 @@ import type { paths } from "./v1";
 const client = createClient<paths>({ baseUrl: "https://catfact.ninja/" });
 export default client;
 ```
+
+// 基于typescript库，build，值得借鉴
+https://github.com/pansinm/swagger-to-ts
