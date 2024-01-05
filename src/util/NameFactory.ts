@@ -84,7 +84,7 @@ const nameHandler: NameHandler = (
     const maxCount = 99;
     let tempName = "";
     for (let i = 0; i < maxCount; i++) {
-        tempName == toSafeString(`${name}_${i + 1}`);
+        tempName = toSafeString(`${name}_${i + 1}`);
         if (!isExist(tempName)) {
             return tempName;
         }
